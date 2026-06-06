@@ -112,7 +112,7 @@
     body.bg-a{
       background: linear-gradient(180deg, #fdfefe 0%, #eff6ff 100%);
     }
-    #btn6, #btn7{
+    #btn6, #btn7, #btnSave, #btnReset{
       /*width: 160px;*/
       width: clamp(130px, 6vmin, 160px);
       line-height: 0px;
@@ -257,10 +257,10 @@
     #btn2.active{
       background-color: #ffdb71;
     }
-    #btn3.active{
+    #btn3.active, #btnReset{
       background-color: #ff9e71;
     }
-    #btn4.active{
+    #btn4.active, #btnSave{
       background-color: #71ffb3;
     }
     #btn5.active{
@@ -283,10 +283,69 @@
       visibility: hidden;
       touch-action: none;
     }
+
+    .container_stick, .container_calibr {
+      display: none;
+      visibility: hidden;
+      opacity: 0;
+      touch-action: none;
+    }
+    .container_stick.active, .container_calibr.active {
+      display: flex;
+      visibility: visible;
+      opacity: 1;
+      touch-action: auto;
+    }
+
+    .setBlock{
+      display: flex;
+      flex-direction: column;
+      gap:20px;
+      overflow: auto;
+    }
+    .setBlock__blockBox{
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      padding: 0px 0px 10px 0px;
+    }
+    .blockContainer{
+      display: flex;
+      flex-direction: row;
+      gap: 20px;
+      justify-content: space-around;
+      /*flex-wrap: wrap;*/
+    }
+    .blockContainer__blockPos{
+      display: flex;
+      flex-direction: row;
+      gap:10px;
+      align-items: center;
+    }
+
+    .col-select_leg{
+      display: flex;
+      flex-direction: row;
+      gap: 20px;
+      align-items: center;
+      justify-content: center;
+    }
+    .col-block{
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .setBlock__title{
+      text-align: center;
+    }
+    input, select{
+      border: none;
+    }
+
   </style>
 </head>
 <body class="bg-a">
-  <div class="container">
+  <div class="container container_stick active">
     
     
 
@@ -326,7 +385,7 @@
                 <button class="btn active" id="btn5">D</button>
             </div>
             <div class="btn-block">
-                <button class="btn active" id="btn1">A</button>
+                <button class="btn" id="btn1">A</button>
                 <button class="btn" id="btn2">B</button>
                 <button class="btn" id="btn3">C</button>
             </div>
@@ -352,114 +411,214 @@
     </div>
   </div>
 
+  <div class="container container_calibr">
+    <div class="col-block">
+      <div class="col-select_leg">
+        <label for="legs_count">Number of legs:</label>
+        <select class="value" id="legs_count" name="legs_count">
+            <option value="4">4</option>
+        </select>
+        <label for="legs_foot">Number of joints:</label>
+        <select class="value" id="legs_foot" name="legs_foot">
+            <option value="2">2</option>
+            <option value="3">3</option>
+        </select>
+      </div>
+      
+      <div class="col-select_leg col-but">
+        <button class="btn" id="btnSave">SAVE</button>
+        <button class="btn" id="btnReset">RESET</button>
+      </div>
+    </div>
+    <div class="legsSetBlock setBlock">
+      <div class="setBlock__title">Change the position values</div>
+      <div class="setBlock__blockBox"></div>
+      <!--<div class="setBlock__blockContainer blockContainer">
+        <div class="blockContainer__blockPos">
+          <div class="label">0</div>
+          <input id = "in_0" class="value" type="number" value="0" max="100" min="-100" step="1">
+        </div>
+        <div class="blockContainer__blockPos">
+          <div class="label">1</div>
+          <input id = "in_1" class="value" type="number" value="0" max="100" min="-100" step="1">
+        </div>
+        <div class="blockContainer__blockPos">
+          <div class="label">2</div>
+          <input id = "in_2" class="value" type="number" value="0" max="100" min="-100" step="1">
+        </div>
+      </div>-->
+
+
+    </div>
+  </div>
+
+  <!-- Template для элемента blockContainer__blockPos -->
+  <template id="blockPosTemplate">
+    <div class="setBlock__blockContainer blockContainer">
+      <div class="blockContainer__blockPos">
+          <div class="label">0</div>
+          <input class="value data-val" type="number" value="0" max="100" min="-100" step="1">
+      </div>
+    </div>
+  </template>
   <script>
+
+const container = document.querySelector('.setBlock__blockBox');
+const blocksCountSelect = document.getElementById('legs_count');
+const itemsPerBlockSelect = document.getElementById('legs_foot');
+const posTemplate = document.getElementById('blockPosTemplate');
+
+function getFormattedString() {
+    const inputs = document.querySelectorAll('.data-val');
+    const parts = [];
+    
+    inputs.forEach(input => {
+        const id = input.id.replace('in_', '');
+        const value = input.value;
+        parts.push(`${id}:${value}`);
+    });
+    
+    return parts.join(',') + '\n';
+}
+
+function getFormattedStringNull() {
+    const inputs = document.querySelectorAll('.data-val');
+    const parts = [];
+    
+    inputs.forEach(input => {
+        const id = input.id.replace('in_', '');
+        parts.push(`${id}:0`);
+    });
+
+    document.querySelectorAll('.data-val').forEach(input => input.value = 0);
+    
+    return parts.join(',') + '\n';
+}
+
+function validateInput(input) {
+    let value = input.value.trim();
+    
+    // Если пусто или не число - ставим 0
+    if (value === '' || isNaN(Number(value))) {
+        input.value = 0;
+        return;
+    }
+    
+    // Преобразуем в целое число (отбрасываем ведущие нули)
+    let num = Math.round(Number(value));
+    
+    // Ограничиваем диапазон
+    if (num < -100) num = -100;
+    if (num > 100) num = 100;
+    
+    input.value = num;
+}
+
+// Навешиваем обработчики на все инпуты
+function setupValidation() {
+    document.querySelectorAll('.value').forEach(input => {
+        input.onblur = () => validateInput(input);
+    });
+}
+
+// Функция создания одного элемента
+function createBlockPos(index) {
+    const clone = posTemplate.content.cloneNode(true);
+    const blockPos = clone.querySelector('.blockContainer__blockPos');
+    blockPos.querySelector('.label').textContent = index;
+    blockPos.querySelector('.value').id = `in_${index}`;
+    return blockPos;
+}
+
+// Функция создания одного блока
+function createBlockContainer(itemsCount, startIndex) {
+    const blockDiv = document.createElement('div');
+    blockDiv.className = 'setBlock__blockContainer';
+    
+    const innerDiv = document.createElement('div');
+    innerDiv.className = 'blockContainer';
+    
+    // Добавляем элементы в блок со сквозной нумерацией
+    for (let i = 0; i < itemsCount; i++) {
+        innerDiv.appendChild(createBlockPos(startIndex + i));
+    }
+    
+    blockDiv.appendChild(innerDiv);
+    return blockDiv;
+}
+
+// Основная функция обновления
+function reupdate() {
+    const blocksCount = parseInt(blocksCountSelect.value);
+    const itemsCount = parseInt(itemsPerBlockSelect.value);
+    
+    // Очищаем контейнер
+    container.innerHTML = '';
+    
+    let currentIndex = 0;
+    
+    // Создаем нужное количество блоков
+    for (let i = 0; i < blocksCount; i++) {
+        container.appendChild(createBlockContainer(itemsCount, currentIndex));
+        currentIndex += itemsCount;
+    }
+
+    setupValidation();
+}
+
+// Слушаем изменения селектов
+blocksCountSelect.addEventListener('change', reupdate);
+itemsPerBlockSelect.addEventListener('change', reupdate);
+
+// Запускаем
+reupdate();
+
 
 const API_URL = "http://127.0.0.1:5000";
 
 console.log('API URL:', API_URL);
-window.currentMode = 'A';
+window.currentMode = 'B';
+
 
 const joystickClR = document.querySelector(".control-right .joystick-wrap .joystick");
 const joystickClL = document.querySelector(".control-left .joystick-wrap .joystick");
+const containerStick = document.querySelector(".container_stick");
+const containerCalibr =  document.querySelector(".container_calibr");
 const btn1 = document.getElementById('btn1');
 const btn2 = document.getElementById('btn2');
 const btn3 = document.getElementById('btn3');
 const btn9 = document.getElementById('btn9');
+const btnSave = document.getElementById('btnSave');
+const btnReset = document.getElementById('btnReset');
 
 
 btn1.onclick = () => {
-    window.currentMode = 'A';
     sendLine('A\n');
-    joystickClR.classList.remove('C');
-    joystickClR.classList.remove('B');
-    joystickClR.classList.remove('D');
-    joystickClR.classList.add('A');
-
-    joystickClL.classList.remove('C');
-    joystickClL.classList.remove('D');
-    joystickClL.classList.remove('B');
-    joystickClL.classList.add('A');
-
-    btn1.classList.add('active');
-    btn2.classList.remove('active');
-    btn3.classList.remove('active');
-    btn9.classList.remove('active');
-    btn9.classList.remove('visible');
-    resetAllJoysticks(); // Сброс в 0 при смене режима
 };
 
 btn2.onclick = () => {
-    window.currentMode = 'B';
+    //window.currentMode = 'B';
     sendLine('B\n');
-    joystickClR.classList.remove('A');
-    joystickClR.classList.remove('C');
-    joystickClR.classList.remove('D');
-    joystickClR.classList.add('B');
-    joystickClL.classList.remove('A');
-    joystickClL.classList.remove('C');
-    joystickClL.classList.remove('D');
-    joystickClL.classList.add('B');
-    btn9.classList.add('visible');
-
-    btn2.classList.add('active');
-    btn1.classList.remove('active');
-    btn3.classList.remove('active');
-    btn9.classList.remove('active');
-    resetAllJoysticks();
+  
 };
 
 btn3.onclick = () => {
-    window.currentMode = 'C';
     sendLine('C\n');
-    joystickClR.classList.remove('A');
-    joystickClR.classList.remove('B');
-    joystickClR.classList.remove('D');
-    joystickClR.classList.add('C');
-    joystickClL.classList.remove('A');
-    joystickClL.classList.remove('D');
-    joystickClL.classList.remove('B');
-    joystickClL.classList.add('C');
-    btn9.classList.remove('visible');
+};
 
-    btn3.classList.add('active');
-    btn1.classList.remove('active');
-    btn2.classList.remove('active');
-    btn9.classList.remove('active');
+btnSave.onclick = () => {
+    sendLine("S," + getFormattedString());
+};
 
-    resetAllJoysticks();
+btnReset.onclick = () => {
+    sendLine("R," + getFormattedStringNull());
 };
 
 btn9.onclick = () => {
-    window.currentMode = 'D';
-    btn9.classList.toggle('active');
-    sendLine('D\n');
-
-    joystickClR.classList.remove('A');
-    joystickClR.classList.remove('C');
-    joystickClR.classList.remove('B');
-    joystickClR.classList.add('D');
-
-    joystickClL.classList.remove('A');
-    joystickClL.classList.remove('C');
-    joystickClL.classList.remove('B');
-    joystickClL.classList.add('D');
-
-    if(btn9.classList.contains('active') == true){
-      joystickClL.classList.add('D');
-      joystickClR.classList.add('D');
-
-      joystickClL.classList.remove('B');
-      joystickClR.classList.remove('B');
-    }
-    else{
-      joystickClL.classList.add('B');
-      joystickClR.classList.add('B');
-
-      joystickClL.classList.remove('D');
-      joystickClR.classList.remove('D');
-    }
-
-    resetAllJoysticks();
+    //window.currentMode = 'D';
+    //Переключение режим отладки
+    containerStick.classList.remove('active');
+    containerCalibr.classList.add('active');
 };
 
 function setJoystickLock(side, locked) {
@@ -480,22 +639,21 @@ function setJoystickLock(side, locked) {
 function resetAllJoysticks() {
     // Вызываем resetKnob для обоих джойстиков через их элементы
     // или просто принудительно обнуляем UI
-    if (window.currentMode == 'A'){
-      document.getElementById('value-bottom').textContent = 'Y: 0';
-      setJoystickLock('left', false);
-    }
-    else if(window.currentMode == 'B'){
-      document.getElementById('value-bottom').textContent = 'X: 0';
-      setJoystickLock('left', false);
-    }
-    else if(window.currentMode == 'D'){
-      document.getElementById('value-bottom').textContent = 'X:0 Y:0';
-      setJoystickLock('left', false);
-    }
-    else if(window.currentMode == 'C'){
-      document.getElementById('value-bottom').textContent = 'X:0 Y:0';
-      setJoystickLock('left', true);
-    }
+    
+    joystickClR.classList.remove('A');
+    joystickClR.classList.remove('C');
+    joystickClR.classList.remove('D');
+    joystickClR.classList.add('B');
+    joystickClL.classList.remove('A');
+    joystickClL.classList.remove('C');
+    joystickClL.classList.remove('D');
+    joystickClL.classList.add('B');
+    btn9.classList.add('visible');
+    
+    document.getElementById('value-bottom').textContent = 'X: 0';
+    setJoystickLock('left', false);
+    
+    
 }
 
 
@@ -518,6 +676,8 @@ function updateUI(isConnected) {
     }
 }
 	  
+
+resetAllJoysticks();
 /*По умолчанию кнопки не доступны*/
 updateUI(false);
 	  
@@ -711,7 +871,8 @@ document.getElementById('btn6').onclick = () => {
         resetKnob();
       }
     })();
-    
+  
+  
   </script>
 </body>
 </html>
