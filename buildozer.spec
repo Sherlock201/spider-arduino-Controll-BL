@@ -1,17 +1,17 @@
 [app]
 
-title = FTBL
-package.name = ftbl
+title = SpBL
+package.name = spbl
 package.domain = org.sherlock201
 
 source.dir = .
 source.include_exts = py,kv,html,css,js,png,jpg
 
 # Иконка
-icon.filename = %(source.dir)s/Controller.png
+icon.filename = %(source.dir)s/ControllerSPlog.png
 
 # Заставка
-presplash.filename = %(source.dir)s/ControllerSpl.png
+presplash.filename = %(source.dir)s/ControllerSP.png
 
 version = 0.1
 requirements = python3,kivy,pyjnius,flask==2.2.5,werkzeug==2.2.3,netifaces
