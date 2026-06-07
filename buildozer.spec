@@ -14,7 +14,7 @@ icon.filename = %(source.dir)s/ControllerSPlog.png
 presplash.filename = %(source.dir)s/ControllerSP.png
 
 version = 0.1
-requirements = python3==3.11,kivy,pyjnius,flask==2.2.5,werkzeug==2.2.3,netifaces
+requirements = python3,kivy,pyjnius,flask>=3.0,werkzeug>=3.0,netifaces
 
 android.api = 35
 android.minapi = 21
