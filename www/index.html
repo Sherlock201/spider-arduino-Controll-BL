@@ -266,10 +266,10 @@
     #btn5.active{
       background-color: #71e3ff;
     }
-    #btn9.active{
+    #btn9.active, #btn10.active{
       background-color: #a6ffed;
     }
-    #btn9.visible{
+    #btn9.visible, #btn10.visible{
       visibility: visible;
       touch-action: auto;
     }
@@ -282,6 +282,14 @@
 
       visibility: hidden;
       touch-action: none;
+    }
+
+    #btn10{
+      width: clamp(45px, 6vmin, 60px) !important;
+      height: clamp(45px, 6vmin, 60px) !important;
+      position: absolute;
+      right: clamp(12px, 2.5vmin, 24px);
+      top: clamp(12px, 2.5vmin, 24px);
     }
 
     .container_stick, .container_calibr {
@@ -297,7 +305,7 @@
       touch-action: auto;
     }
 
-    .setBlock{
+    .setBlock{  
       display: flex;
       flex-direction: column;
       gap:20px;
@@ -393,7 +401,7 @@
       </div>
 
         <div class="control-right">
-		  <div class="btn" id = "btn9">⋯</div>
+		    <button class="btn" id = "btn9">⋯</button>
           <div class="joystick-wrap">
             <div class="joystick" id="joystick-bottom" data-rot="0">
               <div class="base"></div>
@@ -412,6 +420,7 @@
   </div>
 
   <div class="container container_calibr">
+    
     <div class="col-block">
       <div class="col-select_leg">
         <label for="legs_count">Number of legs:</label>
@@ -431,6 +440,7 @@
       </div>
     </div>
     <div class="legsSetBlock setBlock">
+      <button class="btn" id = "btn10">⋯</button>
       <div class="setBlock__title">Change the position values</div>
       <div class="setBlock__blockBox"></div>
       <!--<div class="setBlock__blockContainer blockContainer">
@@ -588,6 +598,7 @@ const btn1 = document.getElementById('btn1');
 const btn2 = document.getElementById('btn2');
 const btn3 = document.getElementById('btn3');
 const btn9 = document.getElementById('btn9');
+const btn10 = document.getElementById('btn10');
 const btnSave = document.getElementById('btnSave');
 const btnReset = document.getElementById('btnReset');
 
@@ -619,6 +630,11 @@ btn9.onclick = () => {
     //Переключение режим отладки
     containerStick.classList.remove('active');
     containerCalibr.classList.add('active');
+};
+
+btn10.onclick = () => {
+    containerStick.classList.add('active');
+    containerCalibr.classList.remove('active');
 };
 
 function setJoystickLock(side, locked) {
@@ -661,7 +677,7 @@ function resetAllJoysticks() {
 function updateUI(isConnected) {
     const btnConnect = document.getElementById('btn7');
     const btnDisconnect = document.getElementById('btn6');
-    const actionButtons = ['btn1', 'btn2', 'btn3'];
+    const actionButtons = ['btn1', 'btn2', 'btn3', 'btn9'];
 
     if (isConnected) {
         // Подключено: BT-Connect заблокирован, остальное доступно
