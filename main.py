@@ -3,6 +3,7 @@ from kivy.clock import Clock
 from kivy.uix.widget import Widget
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 
 import threading
@@ -10,7 +11,6 @@ import os
 import netifaces
 import json
 from flask import Flask, jsonify, request
-from jnius import autoclass
 
 try:
     from jnius import autoclass, PythonJavaClass, java_method
@@ -22,6 +22,40 @@ try:
 except Exception as e:
     AndroidAvailable = False
     print("pyjnius not available:", e)
+
+# -------------------- BLE GATT Callback (Pyjnius) --------------------
+
+if AndroidAvailable:
+    class GattCallback(PythonJavaClass):
+        __javaclass__ = 'android/bluetooth/BluetoothGattCallback'
+        __javacontext__ = 'app'
+
+        def __init__(self, app_instance):
+            super().__init__()
+            self.app = app_instance
+
+        @java_method('(Landroid/bluetooth/BluetoothGatt;II)V')
+        def onConnectionStateChange(self, gatt, status, newState):
+            # STATE_CONNECTED = 2, STATE_DISCONNECTED = 0
+            if newState == 2:
+                print("[BLE] Connected to GATT server, discovering services...")
+                gatt.discoverServices()
+            elif newState == 0:
+                print("[BLE] Disconnected from GATT server")
+                self.app.handle_ble_disconnect()
+
+        @java_method('(Landroid/bluetooth/BluetoothGatt;I)V')
+        def onServicesDiscovered(self, gatt, status):
+            if status == 0:  # GATT_SUCCESS = 0
+                print("[BLE] Services discovered successfully")
+                self.app.handle_ble_services_discovered(gatt)
+            else:
+                print(f"[BLE] Service discovery failed with status: {status}")
+                self.app.handle_ble_error(f"GATT discovery error: {status}")
+
+        @java_method('(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;I)V')
+        def onCharacteristicWrite(self, gatt, characteristic, status):
+            print(f"[BLE] Characteristic write status: {status}")
 
 # -------------------- Flask Server (только для API) --------------------
 
@@ -53,7 +87,6 @@ def bt_disconnect():
 
 @app.route('/send', methods=['GET', 'POST', 'OPTIONS'])
 def send():
-    # Пытаемся взять cmd из GET (args) или POST (form)
     cmd = request.args.get('cmd') or request.form.get('cmd')
     
     if cmd:
@@ -162,7 +195,6 @@ if AndroidAvailable:
                 wv.setVerticalScrollBarEnabled(False)
                 wv.setHorizontalScrollBarEnabled(False)
 
-                # Загружаем локальный HTML из папки www
                 base_path = os.path.abspath(os.path.dirname(__file__))
                 index_path = os.path.join(base_path, "www", "index.html")
                 asset_url = f"file://{index_path}"
@@ -208,8 +240,15 @@ class TestApp(App):
     def build(self):
         self.http_thread = None
         self.fs = None
+        
+        # Переменные управления подключением
+        self.conn_mode = None  # 'classic' или 'ble'
         self.socket = None
         self.ostream = None
+        self.gatt = None
+        self.ble_char = None
+        self.ble_event = None
+        self.ble_error_msg = ""
         
         self.root_box = BoxLayout(orientation='vertical')
         self.status_label = Button(
@@ -223,15 +262,14 @@ class TestApp(App):
     def on_start(self):
         print("[Kivy] on_start вызван")
     
-        # 1. Запрашиваем разрешения у пользователя (для Android 12+)
         if AndroidAvailable:
             request_permissions([
                 Permission.BLUETOOTH_CONNECT,
                 Permission.BLUETOOTH_SCAN,
-                Permission.ACCESS_FINE_LOCATION
+                Permission.ACCESS_FINE_LOCATION,
+                Permission.ACCESS_COARSE_LOCATION
             ])
 
-        # 2. Твоя существующая логика
         self.start_http_server()
         Clock.schedule_once(self.setup_android, 1.0)
 
@@ -317,10 +355,9 @@ class TestApp(App):
             title=title, 
             content=layout, 
             size_hint=(0.8, 0.4),
-            auto_dismiss=False # Чтобы не закрыли случайно тапнув мимо
+            auto_dismiss=False
         )
         
-        # При закрытии этого окна возвращаем WebView
         close_btn.bind(on_release=error_popup.dismiss)
         error_popup.bind(on_dismiss=self.restore_webview)
         
@@ -333,7 +370,6 @@ class TestApp(App):
         print("[Kivy] show_device_selector called")
     
         try:
-            # Скрываем WebView
             if webview_ref['view']:
                 print("[Kivy] Hiding WebView")
                 self.set_webview_visibility(False)
@@ -341,17 +377,9 @@ class TestApp(App):
             BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
             adapter = BluetoothAdapter.getDefaultAdapter()
 
-            # ПРОВЕРКА: Если Bluetooth выключен
             if adapter is None or not adapter.isEnabled():
-                # 1. Отправляем текст в JS (если нужно)
                 self.update_status_js("Включите Bluetooth!")
-                # 2. Показываем Kivy-уведомление (Popup), чтобы пользователь понял причину
                 self.show_error_popup("Ошибка", "Пожалуйста, включите Bluetooth в настройках телефона.")
-                # 3. WebView восстановится автоматически при закрытии этого попапа (см. ниже)
-                return
-                
-            if not adapter.isEnabled():
-                self.update_status_js("Включите Bluetooth!")
                 return
 
             paired_devices = adapter.getBondedDevices().toArray()
@@ -366,19 +394,15 @@ class TestApp(App):
             content = DeviceSelector(device_dict, self.connect_to_addr)
             self.popup = Popup(title="Выберите устройство", content=content, size_hint=(0.9, 0.9))
         
-            # Здесь привязываем обработчик закрытия
             self.popup.bind(on_dismiss=self.restore_webview)
-        
             self.popup.open()
             print("[Kivy] Popup opened, WebView hidden")
         
         except Exception as e:
             print(f"[Kivy] Selector error: {e}")
-            # Если ошибка, сразу восстанавливаем WebView
             self.restore_webview(None)
 
     def restore_webview(self, instance):
-        """Восстанавливаем видимость WebView после закрытия попапа"""
         if webview_ref['view']:
             print("[Kivy] Restoring WebView")
             self.set_webview_visibility(True)
@@ -387,91 +411,208 @@ class TestApp(App):
         if hasattr(self, 'popup'):
             self.popup.dismiss()
         self.update_status_js("Подключение...")
+        
+        # Сбрасываем старые подключения
+        self.disconnect_bt()
+        
         threading.Thread(target=self._bt_thread, args=(address,), daemon=True).start()
 
     def _monitor_connection(self):
-        """Фоновая проверка связи (чтение из сокета)"""
+        """Фоновый мониторинг связи для Classic Bluetooth"""
         try:
             istream = self.socket.getInputStream()
-            while self.socket and self.ostream:
-                # read() блокируется до прихода данных или ошибки
-                # Если робот выключится, read() выкинет Exception
+            while self.socket and self.ostream and self.conn_mode == 'classic':
                 res = istream.read()
-                if res == -1: # Конец потока
+                if res == -1:
                     break
         except Exception as e:
-            print(f"[BT] Monitor: connection lost {e}")
+            print(f"[BT] Monitor Classic lost connection: {e}")
         
-        # Если вышли из цикла — значит связи нет
-        if self.socket: # Проверяем, не сами ли мы закрыли сокет
+        if self.conn_mode == 'classic':
+            self.conn_mode = None
             self.socket = None
             self.ostream = None
             self.update_status_js("Связь потеряна")
-            
+
+    # --- Помощники BLE Callback ---
+    def handle_ble_services_discovered(self, gatt):
+        """Автоматический поиск характеристики с поддержкой записи"""
+        found_char = None
+        services = gatt.getServices().toArray()
+        
+        for service in services:
+            characteristics = service.getCharacteristics().toArray()
+            for char in characteristics:
+                props = char.getProperties()
+                # 8 = WRITE, 4 = WRITE_NO_RESPONSE
+                if (props & 8) or (props & 4):
+                    found_char = char
+                    break
+            if found_char:
+                break
+                
+        if found_char:
+            self.ble_char = found_char
+            if self.ble_event:
+                self.ble_event.set()
+        else:
+            self.handle_ble_error("No write characteristic found")
+
+    def handle_ble_disconnect(self):
+        if self.conn_mode == 'ble':
+            self.conn_mode = None
+            self.gatt = None
+            self.ble_char = None
+            self.update_status_js("Связь потеряна")
+
+    def handle_ble_error(self, message):
+        self.ble_error_msg = message
+        if self.ble_event:
+            self.ble_event.set()
+
+    # --- Главная каскадная логика (Classic -> BLE -> Error) ---
     def _bt_thread(self, address):
+        BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
+        UUID = autoclass('java.util.UUID')
+        adapter = BluetoothAdapter.getDefaultAdapter()
+        device = adapter.getRemoteDevice(address)
+
+        # --------------------------------------------------------
+        # ШАГ 1: Пробуем Classic Bluetooth (RFCOMM)
+        # --------------------------------------------------------
+        print("[BT] Step 1: Trying Classic Bluetooth...")
+        self.update_status_js("Подключение: Classic...")
         try:
-            BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
-            UUID = autoclass('java.util.UUID')
-            adapter = BluetoothAdapter.getDefaultAdapter()
-            device = adapter.getRemoteDevice(address)
-            
             uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
-            
             self.socket = device.createRfcommSocketToServiceRecord(uuid)
             self.socket.connect()
             self.ostream = self.socket.getOutputStream()
-            self.update_status_js("Подключено")
-
-            # Запускаем поток мониторинга чтения
-            threading.Thread(target=self._monitor_connection, daemon=True).start()
             
-        except Exception as e:
+            self.conn_mode = 'classic'
+            self.update_status_js("Подключено (Classic)")
+            print("[BT] Connected via Classic Bluetooth!")
+
+            threading.Thread(target=self._monitor_connection, daemon=True).start()
+            return
+        except Exception as e_classic:
+            print(f"[BT] Classic Bluetooth failed: {e_classic}")
+            if self.socket:
+                try: self.socket.close()
+                except: pass
             self.socket = None
             self.ostream = None
-            self.update_status_js(f"Ошибка: {str(e)[:15]}")
+
+        # --------------------------------------------------------
+        # ШАГ 2: Пробуем BLE (GATT)
+        # --------------------------------------------------------
+        print("[BT] Step 2: Trying BLE (GATT)...")
+        self.update_status_js("Подключение: BLE...")
+        try:
+            self.ble_event = threading.Event()
+            self.ble_error_msg = ""
+            self.ble_char = None
+            
+            callback = GattCallback(self)
+            activity = PythonActivity.mActivity
+            
+            # В Android 6.0+ (API 23+) подключаемся с явным указанием TRANSPORT_LE (2)
+            try:
+                self.gatt = device.connectGatt(activity, False, callback, 2)
+            except:
+                self.gatt = device.connectGatt(activity, False, callback)
+
+            if not self.gatt:
+                raise Exception("Failed to invoke connectGatt")
+
+            # Ждем завершения GATT-сопряжения и поиска сервисов (макс. 8 секунд)
+            success = self.ble_event.wait(timeout=8.0)
+
+            if success and self.ble_char:
+                self.conn_mode = 'ble'
+                self.update_status_js("Подключено (BLE)")
+                print("[BT] Connected via BLE!")
+                return
+            else:
+                raise Exception(self.ble_error_msg or "BLE connection timeout")
+
+        except Exception as e_ble:
+            print(f"[BT] BLE failed: {e_ble}")
+            if self.gatt:
+                try:
+                    self.gatt.disconnect()
+                    self.gatt.close()
+                except: pass
+            self.gatt = None
+            self.ble_char = None
+
+        # --------------------------------------------------------
+        # ШАГ 3: Если и Classic, и BLE потерпели неудачу
+        # --------------------------------------------------------
+        print("[BT] All connection attempts failed.")
+        self.conn_mode = None
+        self.update_status_js("Ошибка подключения")
+        
+        # Выводим всплывающее окно с ошибкой в основном UI потоке Kivy
+        Clock.schedule_once(
+            lambda dt: self.show_error_popup(
+                "Ошибка подключения", 
+                "Не удалось подключиться к устройству ни по Classic Bluetooth, ни по BLE."
+            )
+        )
 
     def disconnect_bt(self):
         try:
-            if self.socket:
+            if self.conn_mode == 'classic' and self.socket:
                 self.socket.close()
-            self.socket = None
-            self.ostream = None
-            self.update_status_js("Отключено")
-        except:
-            pass
+            elif self.conn_mode == 'ble' and self.gatt:
+                self.gatt.disconnect()
+                self.gatt.close()
+        except Exception as e:
+            print(f"[BT] Disconnect error: {e}")
+            
+        self.socket = None
+        self.ostream = None
+        self.gatt = None
+        self.ble_char = None
+        self.conn_mode = None
+        self.update_status_js("Отключено")
 
     def send_to_bt(self, data):
-        if self.ostream:
+        if self.conn_mode == 'classic' and self.ostream:
             try:
-                # Превращаем строку в байтовый массив Python
-                # bytearray в pyjnius автоматически преобразуется в Java byte[]
                 b_data = bytearray(data, 'utf-8')
-            
                 self.ostream.write(b_data)
                 self.ostream.flush()
-                print(f"[BT] Sent: {data.strip()}") 
+                print(f"[BT Classic] Sent: {data.strip()}") 
             except Exception as e:
-                print(f"[BT] Error: {e}")
+                print(f"[BT Classic] Send Error: {e}")
                 self.update_status_js("Связь потеряна")
-                self.socket = None
-                self.ostream = None
+                self.disconnect_bt()
+
+        elif self.conn_mode == 'ble' and self.gatt and self.ble_char:
+            try:
+                b_data = bytearray(data, 'utf-8')
+                self.ble_char.setValue(b_data)
+                self.gatt.writeCharacteristic(self.ble_char)
+                print(f"[BT BLE] Sent: {data.strip()}")
+            except Exception as e:
+                print(f"[BT BLE] Send Error: {e}")
+                self.update_status_js("Связь потеряна")
+                self.disconnect_bt()
+
         else:
-            # Если JS шлет данные, а мы уже знаем, что связи нет
             self.update_status_js("Отключено")
 
     def update_status_js(self, text):
         if webview_ref['view']:
             def run_js():
                 try:
-                    # Вызываем JS функцию setStatus, которая и текст меняет, и кнопки
                     script = f"if(typeof setStatus === 'function') setStatus('{text}');"
                     webview_ref['view'].evaluateJavascript(script, None)
                 except Exception as e:
                     print(f"JS Eval Error: {e}")
             
-            # Всегда выполняем в UI потоке Android
             try:
-                from jnius import autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 PythonActivity.mActivity.runOnUiThread(run_js)
             except:
