@@ -28,6 +28,7 @@ except Exception as e:
 if AndroidAvailable:
     class GattCallback(PythonJavaClass):
         __javaclass__ = 'android/bluetooth/BluetoothGattCallback'
+        __javainterfaces__ = []
         __javacontext__ = 'app'
 
         def __init__(self, app_instance):
