@@ -1,7 +1,7 @@
 [app]
 
-title = SpBL
-package.name = spbl
+title = SpBLE
+package.name = spble
 package.domain = org.sherlock201
 
 source.dir = .
