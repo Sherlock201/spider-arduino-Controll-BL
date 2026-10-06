@@ -23,27 +23,26 @@ except Exception as e:
     AndroidAvailable = False
     print("pyjnius not available:", e)
 
-# -------------------- BLE GATT Callback (Pyjnius) --------------------
+# -------------------- BLE Listener (Pyjnius Interface) --------------------
 
 if AndroidAvailable:
-    class GattCallback(PythonJavaClass):
-        __javaclass__ = 'android/bluetooth/BluetoothGattCallback'
-        __javainterfaces__ = []
+    class BleListenerImpl(PythonJavaClass):
+        __javaclass__ = 'org/sherlock201/spble/MyGattCallback$BleListener'
+        __javainterfaces__ = ['org/sherlock201/spble/MyGattCallback$BleListener']
         __javacontext__ = 'app'
 
         def __init__(self, app_instance):
             super().__init__()
             self.app = app_instance
 
-        @java_method('(Landroid/bluetooth/BluetoothGatt;II)V')
-        def onConnectionStateChange(self, gatt, status, newState):
-            # STATE_CONNECTED = 2, STATE_DISCONNECTED = 0
-            if newState == 2:
-                print("[BLE] Connected to GATT server, discovering services...")
-                gatt.discoverServices()
-            elif newState == 0:
-                print("[BLE] Disconnected from GATT server")
-                self.app.handle_ble_disconnect()
+        @java_method('()V')
+        def onConnected(self):
+            print("[BLE] Connected to GATT server, waiting for services...")
+
+        @java_method('()V')
+        def onDisconnected(self):
+            print("[BLE] Disconnected from GATT server")
+            self.app.handle_ble_disconnect()
 
         @java_method('(Landroid/bluetooth/BluetoothGatt;I)V')
         def onServicesDiscovered(self, gatt, status):
@@ -54,9 +53,10 @@ if AndroidAvailable:
                 print(f"[BLE] Service discovery failed with status: {status}")
                 self.app.handle_ble_error(f"GATT discovery error: {status}")
 
-        @java_method('(Landroid/bluetooth/BluetoothGatt;Landroid/bluetooth/BluetoothGattCharacteristic;I)V')
-        def onCharacteristicWrite(self, gatt, characteristic, status):
-            print(f"[BLE] Characteristic write status: {status}")
+        @java_method('(Ljava/lang/String;)V')
+        def onError(self, message):
+            print(f"[BLE] Error: {message}")
+            self.app.handle_ble_error(message)
 
 # -------------------- Flask Server (только для API) --------------------
 
@@ -97,7 +97,7 @@ def send():
     return jsonify({"status": "ok"}), 200
 
 def get_local_ip():
-    """Получи локальный IP в сети"""
+    """Получить локальный IP в сети"""
     try:
         for iface in netifaces.interfaces():
             if iface.startswith('wlan') or iface.startswith('eth'):
@@ -109,7 +109,7 @@ def get_local_ip():
     return '127.0.0.1'
 
 def run_flask_server():
-    """Запусти Flask сервер ТОЛЬКО для API"""
+    """Запустить Flask сервер ТОЛЬКО для API"""
     print("[HTTP] Начинаю запуск...")
     ip = get_local_ip()
     print(f"[HTTP] IP адрес: {ip}")
@@ -513,14 +513,18 @@ class TestApp(App):
             self.ble_error_msg = ""
             self.ble_char = None
             
-            callback = GattCallback(self)
+            # Используем нативный Java Callback класс
+            MyGattCallback = autoclass('org.sherlock201.spble.MyGattCallback')
+            listener_impl = BleListenerImpl(self)
+            callback_instance = MyGattCallback(listener_impl)
+            
             activity = PythonActivity.mActivity
             
             # В Android 6.0+ (API 23+) подключаемся с явным указанием TRANSPORT_LE (2)
             try:
-                self.gatt = device.connectGatt(activity, False, callback, 2)
+                self.gatt = device.connectGatt(activity, False, callback_instance, 2)
             except:
-                self.gatt = device.connectGatt(activity, False, callback)
+                self.gatt = device.connectGatt(activity, False, callback_instance)
 
             if not self.gatt:
                 raise Exception("Failed to invoke connectGatt")
