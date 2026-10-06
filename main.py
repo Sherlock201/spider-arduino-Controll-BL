@@ -27,7 +27,6 @@ except Exception as e:
 
 if AndroidAvailable:
     class BleListenerImpl(PythonJavaClass):
-        __javaclass__ = 'org/sherlock201/spble/MyGattCallback$BleListener'
         __javainterfaces__ = ['org/sherlock201/spble/MyGattCallback$BleListener']
         __javacontext__ = 'app'
 
@@ -250,6 +249,18 @@ class TestApp(App):
         self.ble_char = None
         self.ble_event = None
         self.ble_error_msg = ""
+
+        # --- ИСПРАВЛЕНИЕ: Предварительная загрузка JNI ---
+        if AndroidAvailable:
+            try:
+                self.ble_listener = BleListenerImpl(self)
+                self.MyGattCallbackClass = autoclass('org.sherlock201.spble.MyGattCallback')
+            except Exception as e:
+                print(f"[Init] BLE JNI Error: {e}")
+        else:
+            self.ble_listener = None
+            self.MyGattCallbackClass = None
+        # -------------------------------------------------
         
         self.root_box = BoxLayout(orientation='vertical')
         self.status_label = Button(
@@ -513,17 +524,16 @@ class TestApp(App):
             self.ble_error_msg = ""
             self.ble_char = None
             
-            # Используем нативный Java Callback класс
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             activity = PythonActivity.mActivity
 
-            # Используем ClassLoader контекста приложения (он знает про classes3.dex)
-            class_loader = activity.getClassLoader()
-            MyGattCallback = class_loader.loadClass('org.sherlock201.spble.MyGattCallback')
-            listener_impl = BleListenerImpl(self)
-            callback_instance = MyGattCallback(listener_impl)
+            # --- ИСПРАВЛЕНИЕ: Используем предзагруженный обернутый класс ---
+            if not self.MyGattCallbackClass or not self.ble_listener:
+                raise Exception("BLE classes not initialized on main thread")
             
-            activity = PythonActivity.mActivity
+            # Инстанцируем callback класс с нашим слушателем
+            callback_instance = self.MyGattCallbackClass(self.ble_listener)
+            # ---------------------------------------------------------------
             
             # В Android 6.0+ (API 23+) подключаемся с явным указанием TRANSPORT_LE (2)
             try:
