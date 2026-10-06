@@ -470,17 +470,24 @@ class TestApp(App):
         else:
             self.handle_ble_error("No write characteristic found")
 
+        self.gatt = gatt
+        
+        # Обновляем WebView - кнопки станут активными!
+        self.update_status_js("Подключено")
+        print("[BLE] Services ready, UI updated to 'Подключено'")
+
     def handle_ble_disconnect(self):
         if self.conn_mode == 'ble':
             self.conn_mode = None
             self.gatt = None
             self.ble_char = None
-            self.update_status_js("Связь потеряна")
+            self.update_status_js("Отключено")
 
     def handle_ble_error(self, message):
         self.ble_error_msg = message
         if self.ble_event:
             self.ble_event.set()
+        self.update_status_js(f"Ошибка: {str(message)[:15]}")
 
     # --- Главная каскадная логика (Classic -> BLE -> Error) ---
     def _bt_thread(self, address):
@@ -627,12 +634,15 @@ class TestApp(App):
         if webview_ref['view']:
             def run_js():
                 try:
+                    # Вызываем JS функцию setStatus, которая и текст меняет, и кнопки
                     script = f"if(typeof setStatus === 'function') setStatus('{text}');"
                     webview_ref['view'].evaluateJavascript(script, None)
                 except Exception as e:
                     print(f"JS Eval Error: {e}")
             
+            # Всегда выполняем в UI потоке Android[cite: 13]
             try:
+                from jnius import autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 PythonActivity.mActivity.runOnUiThread(run_js)
             except:
