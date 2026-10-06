@@ -514,7 +514,12 @@ class TestApp(App):
             self.ble_char = None
             
             # Используем нативный Java Callback класс
-            MyGattCallback = autoclass('org.sherlock201.spble.MyGattCallback')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+
+            # Используем ClassLoader контекста приложения (он знает про classes3.dex)
+            class_loader = activity.getClassLoader()
+            MyGattCallback = class_loader.loadClass('org.sherlock201.spble.MyGattCallback')
             listener_impl = BleListenerImpl(self)
             callback_instance = MyGattCallback(listener_impl)
             
