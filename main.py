@@ -533,6 +533,11 @@ class TestApp(App):
             self.socket = None
             self.ostream = None
 
+            # ---> ИСПРАВЛЕНИЕ ЗДЕСЬ: Даем Bluetooth-адаптеру время на сброс <---
+            import time
+            print("[BT] Ждем 2 секунды перед попыткой BLE...")
+            time.sleep(2.0)
+
         # --------------------------------------------------------
         # ШАГ 2: Пробуем BLE (GATT)
         # --------------------------------------------------------
@@ -564,7 +569,7 @@ class TestApp(App):
                 raise Exception("Failed to invoke connectGatt")
 
             # Ждем завершения GATT-сопряжения и поиска сервисов (макс. 8 секунд)
-            success = self.ble_event.wait(timeout=8.0)
+            success = self.ble_event.wait(timeout=10.0)
 
             if success and self.ble_char:
                 self.conn_mode = 'ble'
