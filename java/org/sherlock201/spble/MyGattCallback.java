@@ -3,6 +3,8 @@ package org.sherlock201.spble;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCallback;
 import android.bluetooth.BluetoothGattCharacteristic;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 public class MyGattCallback extends BluetoothGattCallback {
@@ -16,19 +18,36 @@ public class MyGattCallback extends BluetoothGattCallback {
     }
 
     private BleListener listener;
+    private final Handler handler = new Handler(Looper.getMainLooper());
 
     public MyGattCallback(BleListener listener) {
         this.listener = listener;
     }
 
     @Override
-    public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
+    public void onConnectionStateChange(final BluetoothGatt gatt, int status, int newState) {
         if (newState == 2) { // STATE_CONNECTED
-            Log.d(TAG, "Connected to GATT server, discovering services...");
-            gatt.discoverServices();
+            Log.d(TAG, "Connected to GATT server, will discover services in 400ms...");
+
+            // Сообщаем Python, что канал поднят (для UI)
             if (listener != null) listener.onConnected();
+
+            // Даём стеку Android время зарегистрировать connId
+            handler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    Log.d(TAG, "Now calling discoverServices()");
+                    boolean ok = gatt.discoverServices();
+                    Log.d(TAG, "discoverServices() returned: " + ok);
+                    if (!ok && listener != null) {
+                        listener.onError("discoverServices() failed to start");
+                    }
+                }
+            }, 400);
+
         } else if (newState == 0) { // STATE_DISCONNECTED
             Log.d(TAG, "Disconnected from GATT server");
+            handler.removeCallbacksAndMessages(null); // отменяем отложенный discover
             if (listener != null) listener.onDisconnected();
         }
     }
