@@ -486,10 +486,14 @@ class TestApp(App):
             except Exception as e:
                 print(f"[BLE] Error closing GATT: {e}")
             self.gatt = None
-            
+
         self.conn_mode = None
         self.ble_char = None
         self.update_status_js("Отключено")
+
+        # Разблокируем поток, если он завис в ожидании подключения
+        if self.ble_event:
+            self.ble_event.set()
 
     def handle_ble_error(self, message):
         self.ble_error_msg = message
@@ -597,13 +601,14 @@ class TestApp(App):
 
     def disconnect_bt(self):
         try:
-            if self.conn_mode == 'classic' and self.socket:
+            # Принудительно закрываем сокет без проверок режима (прерывает зависание connect)
+            if self.socket:
                 self.socket.close()
-                self.socket = None
-                self.ostream = None
-            elif self.conn_mode == 'ble' and self.gatt:
-                # Посылаем команду разрыва BLE соединения по эфиру.
-                # close() вызовется автоматически в handle_ble_disconnect при получении ответа.
+            self.socket = None
+            self.ostream = None
+        
+            # Принудительно отключаем GATT
+            if self.gatt:
                 self.gatt.disconnect()
         except Exception as e:
             print(f"[BT] Disconnect error: {e}")
