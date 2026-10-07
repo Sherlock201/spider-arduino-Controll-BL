@@ -8,6 +8,7 @@ from kivy.uix.popup import Popup
 
 import threading
 import os
+import time
 import netifaces
 import json
 from flask import Flask, jsonify, request
@@ -249,6 +250,7 @@ class TestApp(App):
         self.ble_char = None
         self.ble_event = None
         self.ble_error_msg = ""
+        self._internal_disconnect = False  # защита от ложных callback при retry
 
         # --- ИСПРАВЛЕНИЕ: Предварительная загрузка JNI ---
         if AndroidAvailable:
@@ -427,6 +429,9 @@ class TestApp(App):
         # Сбрасываем старые подключения
         self.disconnect_bt()
         
+        # Пауза, чтобы старый GATT успел освободиться, а callback отработал
+        time.sleep(0.5)
+        
         threading.Thread(target=self._bt_thread, args=(address,), daemon=True).start()
 
     def _monitor_connection(self):
@@ -479,6 +484,13 @@ class TestApp(App):
     def handle_ble_disconnect(self):
         """Освобождение ресурсов BLE только после подтверждения разрыва от Android"""
         print("[BLE] handle_ble_disconnect called")
+
+        # Если это внутренний disconnect от _try_ble_connect — не трогаем self.gatt,
+        # он уже сброшен и закрыт вручную
+        if self._internal_disconnect:
+            print("[BLE] Internal disconnect - skipping cleanup")
+            return
+
         if self.gatt:
             try:
                 self.gatt.close()
@@ -501,14 +513,70 @@ class TestApp(App):
             self.ble_event.set()
         self.update_status_js(f"Ошибка: {str(message)[:15]}")
 
-    # --- Главная каскадная логика (Classic -> BLE -> Error) ---
+    # --- Один цикл BLE-подключения ---
+    def _try_ble_connect(self, device):
+        """Один цикл BLE-подключения. True при успехе.
+           При провале сам закрывает GATT и возвращает False.
+           При успехе self.gatt остаётся живым, self.ble_char заполнен."""
+        self.ble_event = threading.Event()
+        self.ble_error_msg = ""
+        self.ble_char = None
+
+        try:
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+
+            if not self.MyGattCallbackClass or not self.ble_listener:
+                raise Exception("BLE classes not initialized on main thread")
+
+            callback_instance = self.MyGattCallbackClass(self.ble_listener)
+
+            try:
+                self.gatt = device.connectGatt(activity, False, callback_instance, 2)
+            except:
+                self.gatt = device.connectGatt(activity, False, callback_instance)
+
+            if not self.gatt:
+                raise Exception("Failed to invoke connectGatt")
+
+            success = self.ble_event.wait(timeout=4.0)
+
+            if success and self.ble_char:
+                return True
+
+            print(f"[BT] BLE cycle failed: {self.ble_error_msg or 'timeout'}")
+        except Exception as e:
+            print(f"[BT] BLE cycle error: {e}")
+
+        # --- Провал: рвём и чистим ---
+        if self.gatt:
+            gatt_to_kill = self.gatt
+            self.gatt = None
+            self.conn_mode = None
+            self._internal_disconnect = True
+            try:
+                gatt_to_kill.disconnect()
+            except:
+                pass
+            time.sleep(0.3)
+            try:
+                gatt_to_kill.close()
+            except:
+                pass
+            self.ble_char = None
+            self._internal_disconnect = False
+            time.sleep(0.5)
+
+        return False
+
+    # --- Главная каскадная логика (BLE retry -> Classic -> Error) ---
     def _bt_thread(self, address):
         BluetoothAdapter = autoclass('android.bluetooth.BluetoothAdapter')
         UUID = autoclass('java.util.UUID')
         adapter = BluetoothAdapter.getDefaultAdapter()
         device = adapter.getRemoteDevice(address)
 
-        # --- Определение типа устройства (может быть UNKNOWN, но попробуем) ---
+        # --- Определение типа устройства ---
         try:
             dev_type = device.getType()
             # 0=UNKNOWN, 1=CLASSIC, 2=LE, 3=DUAL
@@ -517,74 +585,38 @@ class TestApp(App):
             dev_type = 0
             print(f"[BT] getType() failed: {e}")
 
-        # Если явно CLASSIC — сразу Classic, не тратим время на BLE
-        # Если явно LE — сразу BLE
-        # Если UNKNOWN или DUAL — сначала BLE (он быстрее), потом Classic
-
         want_ble_first = (dev_type != 1)  # всё кроме чистого CLASSIC
         want_classic    = (dev_type != 2)  # всё кроме чистого LE
 
         # --------------------------------------------------------
-        # ШАГ 1: BLE (GATT) — если имеет смысл
+        # ШАГ 1: BLE (GATT) с ретраями (до 3 полных циклов)
         # --------------------------------------------------------
         if want_ble_first:
-            print("[BT] Step 1: Trying BLE (GATT)...")
-            self.update_status_js("Подключение: BLE...")
-            try:
-                self.ble_event = threading.Event()
-                self.ble_error_msg = ""
-                self.ble_char = None
+            max_cycles = 3
+            for cycle in range(1, max_cycles + 1):
+                print(f"[BT] BLE cycle #{cycle}/{max_cycles}")
+                self.update_status_js(f"Подключение: BLE ({cycle}/{max_cycles})...")
 
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                activity = PythonActivity.mActivity
-
-                if not self.MyGattCallbackClass or not self.ble_listener:
-                    raise Exception("BLE classes not initialized on main thread")
-
-                callback_instance = self.MyGattCallbackClass(self.ble_listener)
-
-                try:
-                    self.gatt = device.connectGatt(activity, False, callback_instance, 2)
-                except:
-                    self.gatt = device.connectGatt(activity, False, callback_instance)
-
-                if not self.gatt:
-                    raise Exception("Failed to invoke connectGatt")
-
-                success = self.ble_event.wait(timeout=6.0)
-
-                if success and self.ble_char:
+                if self._try_ble_connect(device):
                     self.conn_mode = 'ble'
                     self.update_status_js("Подключено (BLE)")
-                    print("[BT] Connected via BLE!")
-                    return
-                else:
-                    raise Exception(self.ble_error_msg or "BLE connection timeout")
-
-            except Exception as e_ble:
-                print(f"[BT] BLE failed: {e_ble}")
-                if self.gatt:
-                    try:
-                        self.gatt.disconnect()
-                        self.gatt.close()
-                    except: pass
-                self.gatt = None
-                self.ble_char = None
-
-                # Если устройство только LE — Classic смысла нет
-                if not want_classic:
-                    print("[BT] Device is LE-only, skipping Classic.")
-                    self.update_status_js("Ошибка подключения")
-                    Clock.schedule_once(lambda dt: self.show_error_popup(
-                        "Ошибка подключения",
-                        "BLE-устройство не ответило."
-                    ))
+                    print(f"[BT] Connected via BLE on cycle #{cycle}!")
                     return
 
-                # Даём адаптеру передохнуть
-                import time
-                print("[BT] Ждём 2 секунды перед Classic...")
-                time.sleep(2.0)
+                time.sleep(1.0)
+
+            if not want_classic:
+                print("[BT] Device is LE-only, all BLE cycles failed.")
+                self.update_status_js("Ошибка подключения")
+                Clock.schedule_once(lambda dt: self.show_error_popup(
+                    "Ошибка подключения",
+                    "BLE-устройство не ответило после 3 попыток."
+                ))
+                return
+
+            # Даём адаптеру передохнуть перед Classic
+            print("[BT] Ждём 2 секунды перед Classic...")
+            time.sleep(2.0)
 
         # --------------------------------------------------------
         # ШАГ 2: Classic (RFCOMM)
@@ -607,13 +639,16 @@ class TestApp(App):
             except Exception as e_classic:
                 print(f"[BT] Classic Bluetooth failed: {e_classic}")
                 if self.socket:
-                    try: self.socket.close()
-                    except: pass
+                    try:
+                        self.socket.close()
+                    except:
+                        pass
                 self.socket = None
                 self.ostream = None
                 try:
                     adapter.cancelDiscovery()
-                except: pass
+                except:
+                    pass
 
         # --------------------------------------------------------
         # ШАГ 3: Оба не удались
@@ -635,12 +670,14 @@ class TestApp(App):
                 self.socket.close()
             self.socket = None
             self.ostream = None
-        
-            # Принудительно отключаем GATT и полностью освобождаем ресурсы
+
+            # Отключаем GATT. close() НЕ вызываем — он придёт в callback
+            # handle_ble_disconnect() и там корректно закроет клиент.
             if self.gatt:
-                self.gatt.disconnect()
-                #self.gatt.close()  # <-- ДОБАВЛЕНО: обязательно для Android BLE
-            self.gatt = None       # <-- ДОБАВЛЕНО: сброс ссылки на старый объект
+                try:
+                    self.gatt.disconnect()
+                except:
+                    pass
         except Exception as e:
             print(f"[BT] Disconnect error: {e}")
 
@@ -684,7 +721,7 @@ class TestApp(App):
                 except Exception as e:
                     print(f"JS Eval Error: {e}")
             
-            # Всегда выполняем в UI потоке Android[cite: 13]
+            # Всегда выполняем в UI потоке Android
             try:
                 from jnius import autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
