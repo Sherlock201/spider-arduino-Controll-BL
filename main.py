@@ -533,10 +533,15 @@ class TestApp(App):
             self.socket = None
             self.ostream = None
 
+             # Явно снимаем с пары/отменяем
+            try:
+                adapter.cancelDiscovery()
+            except: pass
+
             # ---> ИСПРАВЛЕНИЕ ЗДЕСЬ: Даем Bluetooth-адаптеру время на сброс <---
             import time
-            print("[BT] Ждем 2 секунды перед попыткой BLE...")
-            time.sleep(2.0)
+            print("[BT] Ждем 5 секунды перед попыткой BLE...")
+            time.sleep(5.0)
 
         # --------------------------------------------------------
         # ШАГ 2: Пробуем BLE (GATT)
