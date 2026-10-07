@@ -477,11 +477,19 @@ class TestApp(App):
         print("[BLE] Services ready, UI updated to 'Подключено'")
 
     def handle_ble_disconnect(self):
-        if self.conn_mode == 'ble':
-            self.conn_mode = None
+        """Освобождение ресурсов BLE только после подтверждения разрыва от Android"""
+        print("[BLE] handle_ble_disconnect called")
+        if self.gatt:
+            try:
+                self.gatt.close()
+                print("[BLE] GATT client successfully closed.")
+            except Exception as e:
+                print(f"[BLE] Error closing GATT: {e}")
             self.gatt = None
-            self.ble_char = None
-            self.update_status_js("Отключено")
+            
+        self.conn_mode = None
+        self.ble_char = None
+        self.update_status_js("Отключено")
 
     def handle_ble_error(self, message):
         self.ble_error_msg = message
@@ -591,17 +599,17 @@ class TestApp(App):
         try:
             if self.conn_mode == 'classic' and self.socket:
                 self.socket.close()
+                self.socket = None
+                self.ostream = None
             elif self.conn_mode == 'ble' and self.gatt:
+                # Посылаем команду разрыва BLE соединения по эфиру.
+                # close() вызовется автоматически в handle_ble_disconnect при получении ответа.
                 self.gatt.disconnect()
-                self.gatt.close()
         except Exception as e:
             print(f"[BT] Disconnect error: {e}")
-            
-        self.socket = None
-        self.ostream = None
-        self.gatt = None
-        self.ble_char = None
+
         self.conn_mode = None
+        self.ble_char = None
         self.update_status_js("Отключено")
 
     def send_to_bt(self, data):
