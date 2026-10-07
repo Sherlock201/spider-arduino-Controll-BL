@@ -639,7 +639,7 @@ class TestApp(App):
             # Принудительно отключаем GATT и полностью освобождаем ресурсы
             if self.gatt:
                 self.gatt.disconnect()
-                self.gatt.close()  # <-- ДОБАВЛЕНО: обязательно для Android BLE
+                #self.gatt.close()  # <-- ДОБАВЛЕНО: обязательно для Android BLE
             self.gatt = None       # <-- ДОБАВЛЕНО: сброс ссылки на старый объект
         except Exception as e:
             print(f"[BT] Disconnect error: {e}")
