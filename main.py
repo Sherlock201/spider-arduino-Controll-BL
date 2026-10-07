@@ -10,6 +10,7 @@ import threading
 import os
 import netifaces
 import json
+import time
 from flask import Flask, jsonify, request
 
 try:
@@ -103,7 +104,7 @@ def get_local_ip():
                 addrs = netifaces.ifaddresses(iface)
                 if netifaces.AF_INET in addrs:
                     return addrs[netifaces.AF_INET][0]['addr']
-    except:
+    except Exception:
         pass
     return '127.0.0.1'
 
@@ -250,7 +251,7 @@ class TestApp(App):
         self.ble_event = None
         self.ble_error_msg = ""
 
-        # --- ИСПРАВЛЕНИЕ: Предварительная загрузка JNI ---
+        # --- Предварительная загрузка JNI ---
         if AndroidAvailable:
             try:
                 self.ble_listener = BleListenerImpl(self)
@@ -260,7 +261,6 @@ class TestApp(App):
         else:
             self.ble_listener = None
             self.MyGattCallbackClass = None
-        # -------------------------------------------------
         
         self.root_box = BoxLayout(orientation='vertical')
         self.status_label = Button(
@@ -472,7 +472,7 @@ class TestApp(App):
 
         self.gatt = gatt
         
-        # Обновляем WebView - кнопки станут активными!
+        # Обновляем WebView - кнопки станут активными
         self.update_status_js("Подключено")
         print("[BLE] Services ready, UI updated to 'Подключено'")
 
@@ -528,10 +528,15 @@ class TestApp(App):
         except Exception as e_classic:
             print(f"[BT] Classic Bluetooth failed: {e_classic}")
             if self.socket:
-                try: self.socket.close()
-                except: pass
+                try: 
+                    self.socket.close()
+                except Exception: 
+                    pass
             self.socket = None
             self.ostream = None
+            
+            # Пауза для полного освобождения ресурсов сокета стеком Android
+            time.sleep(1.5)
 
         # --------------------------------------------------------
         # ШАГ 2: Пробуем BLE (GATT)
@@ -539,6 +544,15 @@ class TestApp(App):
         print("[BT] Step 2: Trying BLE (GATT)...")
         self.update_status_js("Подключение: BLE...")
         try:
+            # Гарантированная очистка предыдущего GATT-ресурса перед созданием нового
+            if self.gatt:
+                try:
+                    self.gatt.disconnect()
+                    self.gatt.close()
+                except Exception:
+                    pass
+                self.gatt = None
+
             self.ble_event = threading.Event()
             self.ble_error_msg = ""
             self.ble_char = None
@@ -546,18 +560,15 @@ class TestApp(App):
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             activity = PythonActivity.mActivity
 
-            # --- ИСПРАВЛЕНИЕ: Используем предзагруженный обернутый класс ---
             if not self.MyGattCallbackClass or not self.ble_listener:
                 raise Exception("BLE classes not initialized on main thread")
             
-            # Инстанцируем callback класс с нашим слушателем
             callback_instance = self.MyGattCallbackClass(self.ble_listener)
-            # ---------------------------------------------------------------
             
             # В Android 6.0+ (API 23+) подключаемся с явным указанием TRANSPORT_LE (2)
             try:
                 self.gatt = device.connectGatt(activity, False, callback_instance, 2)
-            except:
+            except Exception:
                 self.gatt = device.connectGatt(activity, False, callback_instance)
 
             if not self.gatt:
@@ -580,7 +591,8 @@ class TestApp(App):
                 try:
                     self.gatt.disconnect()
                     self.gatt.close()
-                except: pass
+                except Exception:
+                    pass
             self.gatt = None
             self.ble_char = None
 
@@ -601,15 +613,23 @@ class TestApp(App):
 
     def disconnect_bt(self):
         try:
-            # Принудительно закрываем сокет без проверок режима (прерывает зависание connect)
+            # Принудительно закрываем сокет
             if self.socket:
-                self.socket.close()
+                try:
+                    self.socket.close()
+                except Exception:
+                    pass
             self.socket = None
             self.ostream = None
         
-            # Принудительно отключаем GATT
+            # Принудительно отключаем и закрываем GATT
             if self.gatt:
-                self.gatt.disconnect()
+                try:
+                    self.gatt.disconnect()
+                    self.gatt.close()
+                except Exception:
+                    pass
+                self.gatt = None
         except Exception as e:
             print(f"[BT] Disconnect error: {e}")
 
@@ -647,18 +667,16 @@ class TestApp(App):
         if webview_ref['view']:
             def run_js():
                 try:
-                    # Вызываем JS функцию setStatus, которая и текст меняет, и кнопки
                     script = f"if(typeof setStatus === 'function') setStatus('{text}');"
                     webview_ref['view'].evaluateJavascript(script, None)
                 except Exception as e:
                     print(f"JS Eval Error: {e}")
             
-            # Всегда выполняем в UI потоке Android[cite: 13]
             try:
                 from jnius import autoclass
                 PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 PythonActivity.mActivity.runOnUiThread(run_js)
-            except:
+            except Exception:
                 pass
 
 if __name__ == '__main__':
